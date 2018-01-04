@@ -86,21 +86,41 @@ uint8_t wbuf[35] =
  *  ======== gpioButtonFxn0 ========
  *  Callback function for the GPIO interrupt on Board_GPIO_BUTTON0.
  */
-#if 0
+#if 1
 void gpioButtonFxn0(uint_least8_t index)
 {
+        uint8_t ret = 0, B=0 ;
 
-    uint8_t ret = 0;
-
-    ret = FM11_Serial_ReadReg(MAIN_IRQ);
-    if(ret & MAIN_IRQ_RX_START)	  irq_data_in = 1;
-    if(ret & MAIN_IRQ_RX_DONE)		irq_rxdone = 1;
-    if(ret & MAIN_IRQ_TX_DONE)		irq_txdone = 1;
-    if(ret & MAIN_IRQ_ACTIVE)		  FlagFirstFrame = ON;
-    if(ret & MAIN_IRQ_FIFO)
-    {
-        FM11_Serial_ReadReg(FIFO_IRQ);
-    }
+        ret = FM11_Serial_ReadReg(MAIN_IRQ);
+        B = FM11_Serial_ReadReg(MAIN_IRQ_MASK);
+        if(ret & MAIN_IRQ_RX_START)  {
+            irq_data_in = 1;
+        }
+        if(ret & MAIN_IRQ_RX_DONE){
+            irq_rxdone = 1;
+        }
+        if(ret & MAIN_IRQ_TX_DONE){
+            irq_txdone = 1;
+        }
+        if(ret & MAIN_IRQ_ACTIVE){
+            FlagFirstFrame = ON;
+        }
+        if(ret & MAIN_IRQ_FIFO){
+            FM11_Serial_ReadReg(FIFO_IRQ); //
+        }
+        if(ret & MAIN_IRQ_AUX){
+            FlagErrIrq = ON;
+            ret =FM11_Serial_ReadReg(AUX_IRQ);
+            if((ret & 0x20) == 0x20){ // parity error
+                parity_err = 1;
+             }
+            if((ret & 0x10) == 0x10) {// crc error
+                crc_err = 1;
+            }
+            if((ret & 0x08) == 0x08){ // frame error
+                frame_err = 1;
+            }
+        }
 }
 #else
 void gpioButtonFxn0(uint_least8_t index)
@@ -184,11 +204,12 @@ void *mainThread(void *arg0)
     {
         if(irq_data_in)
         {
-            rfLen = FM11_RF_Rx(rfBuf);		
+            rfLen = FM11_RF_Rx(fm327_fifo);
 
             if(rfLen > 0)
             {
-                FM11_RF_Tx(rfLen,rfBuf);
+                //FM11_RF_Tx(rfLen,rfBuf);
+                FM11T4T();
             }
             irq_data_in = 0;
         }

@@ -73,7 +73,7 @@ extern "C"
 #define BSP_FM11_SPI_BASE       SSI1_BASE
 /*Board NFC GPIO defines*/
 
-//#define LAUNCHPAD
+#define LAUNCHPAD
 #ifdef LAUNCHPAD
 #define BSP_FM11_SPI_CS         IOID_15
 #define BSP_FM11_SPI_MOSI       IOID_9

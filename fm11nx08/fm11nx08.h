@@ -67,15 +67,18 @@ extern uint8_t irq_data_in;		//非接数据接收终端标识
 extern uint8_t irq_rxdone;
 extern uint8_t irq_txdone;
 extern uint8_t FlagFirstFrame;
+extern uint8_t FlagErrIrq;
 extern uint32_t FSDI;		//-4帧长度PCD
 extern uint8_t CID;
 extern uint8_t block_num;
 extern uint8_t rfLen;
 extern uint8_t rfBuf[255];
 extern uint8_t irq_data_wl;
-
-
-
+extern uint8_t parity_err ;
+extern uint8_t frame_err;
+extern uint8_t crc_err;
+extern uint8_t fm327_fifo[32];
+void FM11T4T(void);
 
 void FM11_RF_Tx(uint32_t ilen,uint8_t *ibuf);
 /*********************************************************************************************************

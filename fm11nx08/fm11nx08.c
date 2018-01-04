@@ -11,20 +11,46 @@
 
 #include "fm11nx08.h"
 #include "bsp_spi.h"
+#include <string.h>
 
 
 
+#define CLA  1
+#define INS  2
+#define P1   3
+#define P2   4
+#define LC   5
+#define DATA 6
+const uint8_t ndef_capability_container[2] = { 0xE1, 0x03 };
+const uint8_t ndef_id[2] = { 0xE1, 0x04 };
 
-uint8_t FlagFirstFrame = OFF;			//¿¨Æ¬Ê×Ö¡±êÊ¶
-uint32_t FSDI = 64-2;		//-4Ö¡³¤¶ÈPCD
+typedef enum {
+    NONE, CC_FILE,
+    NDEF_FILE
+} T4T_FILE;
+T4T_FILE current_file;
+
+
+uint8_t FlagErrIrq = OFF;
+uint8_t FlagFirstFrame = OFF;           //å¡ç‰‡é¦–å¸§æ ‡è¯†
+uint32_t FSDI = 64-2;       //-4å¸§é•¿åº¦PCD
 uint8_t CID = 0;
 uint8_t block_num = 1;
-uint8_t irq_data_in = 0;		//·Ç½ÓÊı¾İ½ÓÊÕÖÕ¶Ë±êÊ¶
+uint8_t irq_data_in = 0;        //éæ¥æ•°æ®æ¥æ”¶ç»ˆç«¯æ ‡è¯†
 uint8_t irq_rxdone = 0;
 uint8_t irq_txdone = 0;
 uint8_t rfLen;
 uint8_t rfBuf[255];
 uint8_t irq_data_wl = 0;
+uint8_t crc_err = 0;
+uint8_t parity_err  = 0;
+uint8_t frame_err = 0;
+
+
+
+
+
+
 
 void pt_delay_ms(uint32_t delayMs)
 {
@@ -51,12 +77,12 @@ void pt_delay_us(uint32_t delayUs)
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:	FM11_RF_Tx
-** º¯Êı¹¦ÄÜ:	RFÊı¾İ»Ø·¢
-** ÊäÈë²ÎÊı:   len:»Ø·¢Êı¾İ³¤¶È
-** 			buf:»Ø·¢µÄÊı¾İ
-** Êä³ö²ÎÊı:   ÎŞ
-** ·µ»ØÖµ:   ÎŞ
+** å‡½æ•°åç§°:	FM11_RF_Tx
+** å‡½æ•°åŠŸèƒ½:	RFæ•°æ®å›å‘
+** è¾“å…¥å‚æ•°:   len:å›å‘æ•°æ®é•¿åº¦
+** 			buf:å›å‘çš„æ•°æ®
+** è¾“å‡ºå‚æ•°:   æ— 
+** è¿”å›å€¼:   æ— 
 *********************************************************************************************************/
 void FM11_RF_Tx(uint32_t len,uint8_t *txbuf)
 {
@@ -69,33 +95,33 @@ void FM11_RF_Tx(uint32_t len,uint8_t *txbuf)
 
     if(slen <= 32)
     {
-        FM11_Serial_Write_FIFO(sbuf,slen);		//write fifo	ÓĞ¶àÉÙ·¢¶àÉÙ
+        FM11_Serial_Write_FIFO(sbuf,slen);		//write fifo	æœ‰å¤šå°‘å‘å¤šå°‘
         slen = 0;
     }
     else
     {
-        FM11_Serial_Write_FIFO(sbuf,32);			//write fifo	ÏÈ·¢32×Ö½Ú½øfifo
+        FM11_Serial_Write_FIFO(sbuf,32);			//write fifo	å…ˆå‘32å­—èŠ‚è¿›fifo
 
-        slen -= 32;		//´ı·¢³¤¶È£­32
-        sbuf += 32;		//´ı·¢Êı¾İÖ¸Õë+32
+        slen -= 32;		//å¾…å‘é•¿åº¦ï¼32
+        sbuf += 32;		//å¾…å‘æ•°æ®æŒ‡é’ˆ+32
     }
 
-    FM11_Serial_WriteReg(RF_TXEN,0x55);	//Ğ´0x55Ê±´¥·¢·Ç½Ó´¥¿Ú»Ø·¢Êı¾İ
+    FM11_Serial_WriteReg(RF_TXEN,0x55);	//å†™0x55æ—¶è§¦å‘éæ¥è§¦å£å›å‘æ•°æ®
     while(slen>0)
     {
         if((FM11_Serial_ReadReg(FIFO_WORDCNT) & 0x3F )<=8)
         {
             if(slen<=24)
             {
-                FM11_Serial_Write_FIFO(sbuf,slen);			//write fifo	ÏÈ·¢32×Ö½Ú½øfifo
+                FM11_Serial_Write_FIFO(sbuf,slen);			//write fifo	å…ˆå‘32å­—èŠ‚è¿›fifo
                 slen = 0;
             }
             else
             {
-                FM11_Serial_Write_FIFO(sbuf,24);			//write fifo	ÏÈ·¢32×Ö½Ú½øfifo
+                FM11_Serial_Write_FIFO(sbuf,24);			//write fifo	å…ˆå‘32å­—èŠ‚è¿›fifo
 
-                slen -= 24; 	//´ı·¢³¤¶È£­24
-                sbuf += 24; 	//´ı·¢Êı¾İÖ¸Õë+24
+                slen -= 24; 	//å¾…å‘é•¿åº¦ï¼24
+                sbuf += 24; 	//å¾…å‘æ•°æ®æŒ‡é’ˆ+24
             }
         }
     }
@@ -103,18 +129,18 @@ void FM11_RF_Tx(uint32_t len,uint8_t *txbuf)
     //while(FM11_ChkIrqInfo(FIFO_IRQ_EMPTY,FIFO_IRQ)==OFF);
     //FM11_ReadReg(MAIN_IRQ);
 
-    //while((FM11_ReadReg(FIFO_WORDCNT) & 0x3F )> 0);	//µÈ´ı·¢ËÍÍê³É±êÖ¾Î»ÖÃÆğ
+    //while((FM11_ReadReg(FIFO_WORDCNT) & 0x3F )> 0);	//ç­‰å¾…å‘é€å®Œæˆæ ‡å¿—ä½ç½®èµ·
     irq_txdone = 0;
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:	FM11_RF_Rx
-** º¯Êı¹¦ÄÜ:	Ğ´FIFO
-** ÊäÈë²ÎÊı:    rbuf:¶ÁÈ¡Êı¾İ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ¶ÁÈ¡µÄÊı¾İ³¤¶È
+** å‡½æ•°åç§°:	FM11_RF_Rx
+** å‡½æ•°åŠŸèƒ½:	å†™FIFO
+** è¾“å…¥å‚æ•°:    rbuf:è¯»å–æ•°æ®
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      è¯»å–çš„æ•°æ®é•¿åº¦
 *********************************************************************************************************/
-#if  0
+#if  1
 uint32_t FM11_RF_Rx(uint8_t *rbuf)
 {
     uint32_t rlen,temp;
@@ -122,9 +148,9 @@ uint32_t FM11_RF_Rx(uint8_t *rbuf)
     temp = 0;
     do
     {
-        if((FM11_Serial_ReadReg(FIFO_WORDCNT) & 0x3F )>=24)	//²éfifoÊÇ·ñµ½24×Ö½Ú
+        if((FM11_Serial_ReadReg(FIFO_WORDCNT) & 0x3F )>=24)	//æŸ¥fifoæ˜¯å¦åˆ°24å­—èŠ‚
         {
-            FM11_Serial_Read_FIFO(24,&rbuf[rlen]);		//½¥ÂúÖ®ºó¶ÁÈ¡24×Ö½Ú
+            FM11_Serial_Read_FIFO(24,&rbuf[rlen]);		//æ¸æ»¡ä¹‹åè¯»å–24å­—èŠ‚
             rlen += 24;
             //printf("rlen %02x \n",rlen);
         }
@@ -144,9 +170,9 @@ uint32_t FM11_RF_Rx(uint8_t *rbuf)
     	}
     */
 
-    temp =(uint32_t)( FM11_Serial_ReadReg(FIFO_WORDCNT) & 0x3F);	//½ÓÊÕÍêÈ«Ö®ºó£¬²éfifoÓĞ¶àÉÙ×Ö½Ú
+    temp =(uint32_t)( FM11_Serial_ReadReg(FIFO_WORDCNT) & 0x3F);	//æ¥æ”¶å®Œå…¨ä¹‹åï¼ŒæŸ¥fifoæœ‰å¤šå°‘å­—èŠ‚
 
-    FM11_Serial_Read_FIFO(temp,&rbuf[rlen]);		//¶Á×îºóµÄÊı¾İ
+    FM11_Serial_Read_FIFO(temp,&rbuf[rlen]);		//è¯»æœ€åçš„æ•°æ®
     rlen += temp;
 
 #if DEBUG_PRINT ==1
@@ -156,7 +182,7 @@ uint32_t FM11_RF_Rx(uint8_t *rbuf)
 
     if(rlen <= 2)
         return 0;
-    rlen -= 2;	//2×Ö½ÚcrcĞ£Ñé
+    rlen -= 2;	//2å­—èŠ‚crcæ ¡éªŒ
     return rlen;
 }
 #else
@@ -194,11 +220,11 @@ uint32_t FM11_RF_Rx(uint8_t *rbuf)
 #endif
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:	FM11_Set_RatsCfg
-** º¯Êı¹¦ÄÜ:	ÅäÖÃ¿¨Æ¬ratsÏà¹ØÊı¾İ
-** ÊäÈë²ÎÊı:    rats ²ÎÊı
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:	FM11_Set_RatsCfg
+** å‡½æ•°åŠŸèƒ½:	é…ç½®å¡ç‰‡ratsç›¸å…³æ•°æ®
+** è¾“å…¥å‚æ•°:    rats å‚æ•°
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_Set_RatsCfg(uint8_t rats)
 {
@@ -214,59 +240,59 @@ void FM11_Set_RatsCfg(uint8_t rats)
     else
         FSDI = 256;
 
-    FSDI -= 2;	//¼õÈ¥2×Ö½ÚEDC
-    block_num = 0x01;	//³õÊ¼Îª1£¬µ÷ÓÃÇ°£¬Ò»Ö±ÎªÉÏÒ»Ö¡µÄ¿éºÅ
+    FSDI -= 2;	//å‡å»2å­—èŠ‚EDC
+    block_num = 0x01;	//åˆå§‹ä¸º1ï¼Œè°ƒç”¨å‰ï¼Œä¸€ç›´ä¸ºä¸Šä¸€å¸§çš„å—å·
 }
 
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_CS_ON
-** º¯Êı¹¦ÄÜ:    FM11µÄspi¿ÚÆ¬Ñ¡ON
-** ÊäÈë²ÎÊı:    ÎŞ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_CS_ON
+** å‡½æ•°åŠŸèƒ½:    FM11çš„spiå£ç‰‡é€‰ON
+** è¾“å…¥å‚æ•°:    æ— 
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_CS_ON(void)
 {
     //__disable_irq();
-    BSP_FM11_Sel();        //Êä³öµÍÓĞĞ§
+    BSP_FM11_Sel();        //è¾“å‡ºä½æœ‰æ•ˆ
     Delay_10us(100);
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_CS_OFF
-** º¯Êı¹¦ÄÜ:    FM11µÄspi¿ÚÆ¬Ñ¡OFF
-** ÊäÈë²ÎÊı:    ÎŞ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_CS_OFF
+** å‡½æ•°åŠŸèƒ½:    FM11çš„spiå£ç‰‡é€‰OFF
+** è¾“å…¥å‚æ•°:    æ— 
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_CS_OFF(void)
 {
     //return;
-    BSP_FM11_DeSel()   //Êä³ö¸ßÎŞĞ§
+    BSP_FM11_DeSel()   //è¾“å‡ºé«˜æ— æ•ˆ
     //__enable_irq();
 }
 
 
 /**********************************************************************************************************
-** º¯ÊıÃû³Æ£ºFM11¶ÁĞ´Ò»¸ö×Ö½Ú(SPI)
+** å‡½æ•°åç§°ï¼šFM11è¯»å†™ä¸€ä¸ªå­—èŠ‚(SPI)
 *********************************************************************************************************
 uint8_t FM11_Single_RW(uint8_t wData)
 {
-    //·¢ËÍÊı¾İ
+    //å‘é€æ•°æ®
     while (SPI_I2S_GetFlagStatus(FM11_SPI, SPI_I2S_FLAG_TXE) == RESET);
 
     SPI_I2S_SendData(FM11_SPI,wData);
 
     while (SPI_I2S_GetFlagStatus(FM11_SPI, SPI_I2S_FLAG_RXNE) == RESET);
-    //½ÓÊÕÊı¾İ
+    //æ¥æ”¶æ•°æ®
     return SPI_I2S_ReceiveData(FM11_SPI);
 }
 */
 
 /**********************************************************************************************************
-** º¯ÊıÃû³Æ£ºFM11 Ğ´¶à¸ö×Ö½Ú <=16¸ö×Ö½Ú
+** å‡½æ•°åç§°ï¼šFM11 å†™å¤šä¸ªå­—èŠ‚ <=16ä¸ªå­—èŠ‚
 ********************************************************************************************************
 void SPI_WriteByte(uint8_t *pData, uint32_t length)
 {
@@ -281,7 +307,7 @@ void SPI_WriteByte(uint8_t *pData, uint32_t length)
 }
 **/
 /**********************************************************************************************************
-** º¯ÊıÃû³Æ£ºFM11¶Á¶à¸ö×Ö½Ú <=16¸ö×Ö½Ú
+** å‡½æ•°åç§°ï¼šFM11è¯»å¤šä¸ªå­—èŠ‚ <=16ä¸ªå­—èŠ‚
 ********************************************************************************************************
 void  SPI_readByte(uint8_t *pData, uint32_t length)
 {
@@ -296,45 +322,45 @@ void  SPI_readByte(uint8_t *pData, uint32_t length)
 **/
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Write_E2_Enable
-** º¯Êı¹¦ÄÜ:    FM11µÄspi¿ÚE2Ğ´Ê¹ÄÜ
-** ÊäÈë²ÎÊı:    ÎŞ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_Write_E2_Enable
+** å‡½æ•°åŠŸèƒ½:    FM11çš„spiå£E2å†™ä½¿èƒ½
+** è¾“å…¥å‚æ•°:    æ— 
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_Write_E2_Enable(void)
 {
     FM11_CS_ON();
-    Delay_10us(CS_DELAY);         //ÑÓÊ±È·±£FM11ÉÏµçÍê³É
-    BSP_SPI_RW_One(0xCE); //Ê¹ÄÜE2ÌØÊâÖ¸Áî£¬ÏÈ·¢ËÍCE
-    BSP_SPI_RW_One(0x55); //Ê¹ÄÜE2ÌØÊâÖ¸Áî£¬ÔÙ·¢ËÍ55£¬¼ûÎÄµµµÚ30Ò³
+    Delay_10us(CS_DELAY);         //å»¶æ—¶ç¡®ä¿FM11ä¸Šç”µå®Œæˆ
+    BSP_SPI_RW_One(0xCE); //ä½¿èƒ½E2ç‰¹æ®ŠæŒ‡ä»¤ï¼Œå…ˆå‘é€CE
+    BSP_SPI_RW_One(0x55); //ä½¿èƒ½E2ç‰¹æ®ŠæŒ‡ä»¤ï¼Œå†å‘é€55ï¼Œè§æ–‡æ¡£ç¬¬30é¡µ
     FM11_CS_OFF();
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Write_E2_Disable
-** º¯Êı¹¦ÄÜ:    FM11µÄspi¿ÚE2Ğ´½ûÖ¹
-** ÊäÈë²ÎÊı:    ÎŞ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_Write_E2_Disable
+** å‡½æ•°åŠŸèƒ½:    FM11çš„spiå£E2å†™ç¦æ­¢
+** è¾“å…¥å‚æ•°:    æ— 
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_Write_E2_Disable(void)
 {
     FM11_CS_ON();
-    Delay_10us(CS_DELAY);         //ÑÓÊ±È·±£FM11ÉÏµçÍê³É
-    BSP_SPI_RW_One(0xCE); //½ûÖ¹E2ÌØÊâÖ¸Áî
-    BSP_SPI_RW_One(0xAA); //½ûÖ¹E2ÌØÊâÖ¸Áî
+    Delay_10us(CS_DELAY);         //å»¶æ—¶ç¡®ä¿FM11ä¸Šç”µå®Œæˆ
+    BSP_SPI_RW_One(0xCE); //ç¦æ­¢E2ç‰¹æ®ŠæŒ‡ä»¤
+    BSP_SPI_RW_One(0xAA); //ç¦æ­¢E2ç‰¹æ®ŠæŒ‡ä»¤
     FM11_CS_OFF();
 }
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_WriteReg
-** º¯Êı¹¦ÄÜ:    Ğ´FM11¼Ä´æÆ÷
-** ÊäÈë²ÎÊı:    reg:¼Ä´æÆ÷µØÖ·
-**                  val:Ğ´ÈëµÄ²ÎÊı
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_Serial_WriteReg
+** å‡½æ•°åŠŸèƒ½:    å†™FM11å¯„å­˜å™¨
+** è¾“å…¥å‚æ•°:    reg:å¯„å­˜å™¨åœ°å€
+**                  val:å†™å…¥çš„å‚æ•°
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_Serial_WriteReg(uint8_t reg,uint8_t val)
 {
@@ -342,26 +368,26 @@ void FM11_Serial_WriteReg(uint8_t reg,uint8_t val)
     mode = reg & 0x0F;
     FM11_CS_ON();
     Delay_10us(CS_DELAY);
-    BSP_SPI_RW_One(mode);    //Ö¸Áî¼ûÊÖ²áµÚ28Ò³
+    BSP_SPI_RW_One(mode);    //æŒ‡ä»¤è§æ‰‹å†Œç¬¬28é¡µ
     BSP_SPI_RW_One(val);
     FM11_CS_OFF();
 }
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_ReadReg
-** º¯Êı¹¦ÄÜ:    ¶Á¼Ä´æÆ÷Öµ
-** ÊäÈë²ÎÊı:    reg:¼Ä´æÆ÷µØÖ·
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      val,¶Á³öµÄ¼Ä´æÆ÷Öµ
+** å‡½æ•°åç§°:    FM11_Serial_ReadReg
+** å‡½æ•°åŠŸèƒ½:    è¯»å¯„å­˜å™¨å€¼
+** è¾“å…¥å‚æ•°:    reg:å¯„å­˜å™¨åœ°å€
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      val,è¯»å‡ºçš„å¯„å­˜å™¨å€¼
 *********************************************************************************************************/
 uint8_t FM11_Serial_ReadReg(uint8_t reg)
 {
     uint8_t mode;
     uint8_t val;
 
-    mode = reg&0x0F; //Ö¸Áî¼ûÊÖ²áµÚ28Ò³
-    mode = mode | 0x20; //Ö¸Áî¼ûÊÖ²áµÚ28Ò³
+    mode = reg&0x0F; //æŒ‡ä»¤è§æ‰‹å†Œç¬¬28é¡µ
+    mode = mode | 0x20; //æŒ‡ä»¤è§æ‰‹å†Œç¬¬28é¡µ
 
     FM11_CS_ON();
     BSP_SPI_RW_One(mode);
@@ -371,44 +397,44 @@ uint8_t FM11_Serial_ReadReg(uint8_t reg)
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_Write_E2Page
-** º¯Êı¹¦ÄÜ:    Ğ´E2Êı¾İ
-** ÊäÈë²ÎÊı:    addr:E2µØÖ·
-**           len:Ğ´ÈëµÄÊı¾İ³¤¶È(<=16)
-**           *buf:Ğ´ÈëµÄÊı¾İ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:     ÎŞ
+** å‡½æ•°åç§°:    FM11_Serial_Write_E2Page
+** å‡½æ•°åŠŸèƒ½:    å†™E2æ•°æ®
+** è¾“å…¥å‚æ•°:    addr:E2åœ°å€
+**           len:å†™å…¥çš„æ•°æ®é•¿åº¦(<=16)
+**           *buf:å†™å…¥çš„æ•°æ®
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:     æ— 
 *********************************************************************************************************/
 uint8_t w_len=0;
 uint8_t w_cnt=0;
 void FM11_Serial_Write_E2Page(uint16_t addr,uint32_t len,uint8_t *buf)
 {
     uint8_t cmd[2];
-    cmd[0] = (addr >> 8) & 0x03| 0x40; //´Ë´¦È·ÈÏÒ»ÏÂ£¬Ğè²»ĞèÒªÔÙ´Î·¢ËÍĞ´eeµÄµÚÒ»¸ö×Ö½ÚµÄÌØÊâÖ¸Áî
+    cmd[0] = (addr >> 8) & 0x03| 0x40; //æ­¤å¤„ç¡®è®¤ä¸€ä¸‹ï¼Œéœ€ä¸éœ€è¦å†æ¬¡å‘é€å†™eeçš„ç¬¬ä¸€ä¸ªå­—èŠ‚çš„ç‰¹æ®ŠæŒ‡ä»¤
     cmd[1] = addr & 0xFF;
 //FM11_Write_E2_Enable();
 //  printf("%s: adr = 0x%3x, len = %d, ibuf[0] = 0x%2x\r\n", __func__, adr, len, ibuf[0]);
     FM11_CS_ON();
     Delay_10us(10);
     BSP_SPI_RW_One(cmd[0]);
-    BSP_SPI_RW_One(cmd[1]); //E2µØÖ·Îª10bit£¬Õâ¸ö×Ö½ÚÖ»Õ¼8bit£¬»¹ÓĞÁ½Î»ÔÚaddr0
+    BSP_SPI_RW_One(cmd[1]); //E2åœ°å€ä¸º10bitï¼Œè¿™ä¸ªå­—èŠ‚åªå 8bitï¼Œè¿˜æœ‰ä¸¤ä½åœ¨addr0
     //w_len=len;
 	//w_cnt++;
     BSP_SPI_Write(buf,len);
     FM11_CS_OFF();
 	//cmd[1]=cmd[1];
-    Delay_10us(2000);          //´Ë´¦±ØĞëÒª¼ÓÑÓÊ±£¬¼ûÊÖ²áµÚ30Ò³
+    Delay_10us(2000);          //æ­¤å¤„å¿…é¡»è¦åŠ å»¶æ—¶ï¼Œè§æ‰‹å†Œç¬¬30é¡µ
  //   FM11_Init(BSP_FM11_SPI_BIT_RATE, BSP_FM11_SPI_CLK);
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_Write_Eeprom
-** º¯Êı¹¦ÄÜ:    Ğ´E2Êı¾İ
-** ÊäÈë²ÎÊı:    addr:E2µØÖ·
-**           len:Ğ´ÈëµÄÊı¾İ³¤¶È¿ÉÒÔ´óÓÚ16×Ö½Ú
-**           *wbuf:Ğ´ÈëµÄÊı¾İ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:     ÎŞ
+** å‡½æ•°åç§°:    FM11_Serial_Write_Eeprom
+** å‡½æ•°åŠŸèƒ½:    å†™E2æ•°æ®
+** è¾“å…¥å‚æ•°:    addr:E2åœ°å€
+**           len:å†™å…¥çš„æ•°æ®é•¿åº¦å¯ä»¥å¤§äº16å­—èŠ‚
+**           *wbuf:å†™å…¥çš„æ•°æ®
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:     æ— 
 *********************************************************************************************************/
 int FM11_Serial_Write_Eeprom(uint16_t addr,uint32_t len,uint8_t *wbuf)
 {
@@ -456,22 +482,22 @@ int FM11_Serial_Write_Eeprom(uint16_t addr,uint32_t len,uint8_t *wbuf)
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_Read_Eeprom
-** º¯Êı¹¦ÄÜ:    ¶ÁÈ¡µÄE2Êı¾İ
-** ÊäÈë²ÎÊı:    addr:E2µØÖ·
-**           len:¶ÁÈ¡µÄÊı¾İ³¤¶È£¬¿ÉÒÔ´óÓÚ16¸ö×Ö½Ú
-**           *rbuf:¶ÁÈ¡µÄÊı¾İ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:     ÎŞ
+** å‡½æ•°åç§°:    FM11_Serial_Read_Eeprom
+** å‡½æ•°åŠŸèƒ½:    è¯»å–çš„E2æ•°æ®
+** è¾“å…¥å‚æ•°:    addr:E2åœ°å€
+**           len:è¯»å–çš„æ•°æ®é•¿åº¦ï¼Œå¯ä»¥å¤§äº16ä¸ªå­—èŠ‚
+**           *rbuf:è¯»å–çš„æ•°æ®
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:     æ— 
 *********************************************************************************************************/
 void FM11_Serial_Read_Eeprom(uint16_t addr,uint32_t len,uint8_t *rbuf)
 {
     uint8_t buf[2];
-    buf[0] = ((addr >> 8) & 0x03)| 0x60; //Ö¸Áî¼ûÊÖ²áµÚ28Ò³
+    buf[0] = ((addr >> 8) & 0x03)| 0x60; //æŒ‡ä»¤è§æ‰‹å†Œç¬¬28é¡µ
     buf[1] = addr & 0xFF;
 
     FM11_CS_ON();
-    Delay_10us(CS_DELAY);         //ÑÓÊ±È·±£FM11ÉÏµçÍê³É
+    Delay_10us(CS_DELAY);         //å»¶æ—¶ç¡®ä¿FM11ä¸Šç”µå®Œæˆ
     BSP_SPI_RW_One(buf[0]);
     BSP_SPI_RW_One(buf[1]);
     BSP_SPI_Read(rbuf,len);
@@ -480,12 +506,12 @@ void FM11_Serial_Read_Eeprom(uint16_t addr,uint32_t len,uint8_t *rbuf)
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_Write_FIFO
-** º¯Êı¹¦ÄÜ:    Ğ´FIFO
-** ÊäÈë²ÎÊı:    wlen:Ğ´Êı¾İ³¤¶È(<=32 fifo¿Õ¼ä)
-**           wbuf:Ğ´µÄÊı¾İ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_Serial_Write_FIFO
+** å‡½æ•°åŠŸèƒ½:    å†™FIFO
+** è¾“å…¥å‚æ•°:    wlen:å†™æ•°æ®é•¿åº¦(<=32 fifoç©ºé—´)
+**           wbuf:å†™çš„æ•°æ®
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 void FM11_Serial_Write_FIFO(uint8_t *wbuf,uint32_t wlen)
 {
@@ -496,11 +522,11 @@ void FM11_Serial_Write_FIFO(uint8_t *wbuf,uint32_t wlen)
 }
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Serial_Read_FIFO
-** º¯Êı¹¦ÄÜ:    ·¢ËÍNAKÖ¡
-** ÊäÈë²ÎÊı:    *rlen:´ı¶ÁÈ¡µÄÊı¾İ³¤¶È
-** Êä³ö²ÎÊı:    *rbuf:¶ÁÈ¡µÄÊı¾İ
-** ·µ»ØÖµ:      ¶ÁÈ¡µÄÊı¾İ³¤¶È
+** å‡½æ•°åç§°:    FM11_Serial_Read_FIFO
+** å‡½æ•°åŠŸèƒ½:    å‘é€NAKå¸§
+** è¾“å…¥å‚æ•°:    *rlen:å¾…è¯»å–çš„æ•°æ®é•¿åº¦
+** è¾“å‡ºå‚æ•°:    *rbuf:è¯»å–çš„æ•°æ®
+** è¿”å›å€¼:      è¯»å–çš„æ•°æ®é•¿åº¦
 *********************************************************************************************************/
 void FM11_Serial_Read_FIFO(uint32_t rlen,uint8_t *rbuf)
 {
@@ -512,11 +538,11 @@ void FM11_Serial_Read_FIFO(uint32_t rlen,uint8_t *rbuf)
 
 
 /*********************************************************************************************************
-** º¯ÊıÃû³Æ:    FM11_Init
-** º¯Êı¹¦ÄÜ:    FM11µÄspi¿Ú³õÊ¼»¯³ÌĞò
-** ÊäÈë²ÎÊı:    ÎŞ
-** Êä³ö²ÎÊı:    ÎŞ
-** ·µ»ØÖµ:      ÎŞ
+** å‡½æ•°åç§°:    FM11_Init
+** å‡½æ•°åŠŸèƒ½:    FM11çš„spiå£åˆå§‹åŒ–ç¨‹åº
+** è¾“å…¥å‚æ•°:    æ— 
+** è¾“å‡ºå‚æ•°:    æ— 
+** è¿”å›å€¼:      æ— 
 *********************************************************************************************************/
 uint8_t test_WriteBuf[16]= {1,2,3,4,5,6,7,8,};
 uint8_t test_ReadBuf[16]= {0};
@@ -529,7 +555,7 @@ void FM11_Init(uint32_t bitRate, uint32_t clkPin)
     BSP_SPI_Open(bitRate,clkPin);
 
     FM11_CS_OFF();
-    FM11_Serial_WriteReg(FIFO_FLUSH,0xFF);     //Çåfifo¼Ä´æÆ÷
+    FM11_Serial_WriteReg(FIFO_FLUSH,0xFF);     //æ¸…fifoå¯„å­˜å™¨
 
 #ifdef FIFO_TEST
     while(1)
@@ -547,7 +573,93 @@ void FM11_Init(uint32_t bitRate, uint32_t clkPin)
     FM11_Serial_WriteReg(NFC_CFG,0x2);
     g_reg=FM11_Serial_ReadReg(NFC_CFG);
 #endif
-
 }
 
+uint8_t fm327_fifo[32];
+uint8_t status_ok[3] = { 0x02, 0x90, 0x00 };
+uint8_t status_word[3] = { 0x02, 0x6A, 0x82 };
+uint8_t status_word2[3] = { 0x02, 0x6A, 0x00 };
+uint8_t capability_container[15] = { 0x00, 0x0F,       //CCLEN
+                                                                        0x20,              //Mapping Version
+                                      0x00, 0x10,        //MLe
+                                      0x00, 0x18,        //MLc
+                                                                        0x04,              //NDEF
+                                                                        0x06,              //NDEF
+                                                                        0xE1, 0x04,        //NDEF FILE ID
+                                                                        0x03, 0x84,        //NDEF
+                                                                        0x00,              //Read Access
+                                                                        0x00};             //Write Access
 
+uint8_t ndef_file[90] = {
+  0x00,0x14,0xD1,0x01,0x0E,0x54,0x02,0x65,0x6E,0x73,0x69,0x6E,0x61,0x2E,0x63,0x6F,0x6D,0x2E,0x63,0x6E
+  /*    0x00, 33,
+  0xd1, 0x02, 0x1c, 0x53, 0x70, 0x91, 0x01, 0x09, 0x54, 0x02,
+  0x65, 0x6e, 0x4c, 0x69, 0x62, 0x6e, 0x66, 0x63, 0x51, 0x01,
+  0x0b, 0x55, 0x03, 0x6c, 0x69, 0x62, 0x6e, 0x66, 0x63, 0x2e,
+  0x6f, 0x72, 0x67
+    */
+};
+void FM11T4T(void)
+{
+ uint8_t NAK_CRC_ERR = 0x05;
+if(crc_err){
+     FM11_Serial_Write_FIFO(&NAK_CRC_ERR, 1);
+     FM11_Serial_WriteReg(RF_TXEN, 0x55);
+      crc_err = 0;
+ }
+else
+{
+       status_ok[0] = fm327_fifo[0];
+       status_word[0] = fm327_fifo[0];
+       status_word2[0] = fm327_fifo[0];
+       if(fm327_fifo[INS] == 0xA4)  // select apdu
+       {
+           if(fm327_fifo[P1] == 0x00)
+           {
+               if ((fm327_fifo[LC] == sizeof(ndef_capability_container)) && (0 == memcmp(ndef_capability_container, fm327_fifo + DATA, fm327_fifo[LC])))       //2
+               {
+                       FM11_Serial_Write_FIFO(status_ok, 3);
+                       FM11_Serial_WriteReg(RF_TXEN, 0x55);
+                       current_file = CC_FILE;
+               } else if ((fm327_fifo[LC] == sizeof(ndef_id)) && (0 == memcmp(ndef_id, fm327_fifo + DATA, fm327_fifo[LC]))) {          //4
+                   FM11_Serial_Write_FIFO(status_ok, 3);
+                   FM11_Serial_WriteReg(RF_TXEN, 0x55);
+                   current_file = NDEF_FILE;
+               } else {
+                   FM11_Serial_Write_FIFO(status_word2, 3);
+                   FM11_Serial_WriteReg(RF_TXEN, 0x55);
+                   current_file = NONE;
+               }
+           } else if(fm327_fifo[P1] == 0x04) {                                                  //1
+                   FM11_Serial_Write_FIFO(status_ok, 3);
+                   FM11_Serial_WriteReg(RF_TXEN, 0x55);
+           } else {
+                   FM11_Serial_Write_FIFO(status_ok, 3);                            //7 can read IC
+                   FM11_Serial_WriteReg(RF_TXEN, 0x55);
+           }
+       } else if(fm327_fifo[INS] == 0xB0) {
+           if(current_file == CC_FILE) {                                                        //3
+               FM11_Serial_Write_FIFO(status_ok, 1);
+               FM11_Serial_Write_FIFO(capability_container + (fm327_fifo[P1] << 8) + fm327_fifo[P2], fm327_fifo[LC]);
+               FM11_Serial_Write_FIFO(&status_ok[1], 2);
+               FM11_Serial_WriteReg(RF_TXEN, 0x55);
+           } else if(current_file == NDEF_FILE) {                                       //5
+               //I2C_ReadBytes24(ndef_file, 0x000C, 900);
+               FM11_Serial_Write_FIFO(status_ok, 1);
+               FM11_Serial_Write_FIFO(ndef_file + (fm327_fifo[P1] << 8) + fm327_fifo[P2], fm327_fifo[LC]);
+               FM11_Serial_Write_FIFO(&status_ok[1], 2);
+               FM11_Serial_WriteReg(RF_TXEN, 0x55);
+           } else {
+               FM11_Serial_Write_FIFO(status_word, 3);
+               FM11_Serial_WriteReg(RF_TXEN, 0x55);
+           }
+       } else if(fm327_fifo[INS] ==  0xD6) { // UPDATE_BINARY
+               memcpy(ndef_file + (fm327_fifo[P1] << 8) + fm327_fifo[P2], fm327_fifo + DATA, fm327_fifo[LC]);
+               FM11_Serial_Write_FIFO(status_ok, 3);
+               FM11_Serial_WriteReg(RF_TXEN, 0x55);
+       } else {                                                                                                     //6
+           FM11_Serial_Write_FIFO(status_word, 3);
+           FM11_Serial_WriteReg(RF_TXEN, 0x55);
+       }
+ }
+}
